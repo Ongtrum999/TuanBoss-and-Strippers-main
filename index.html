@@ -23,6 +23,7 @@
       <button id="btn-space" title="Thêm một khoảng trắng">Space</button>
       <button id="btn-delete" title="Xóa ký tự cuối cùng">Delete</button>
     </div>
+  </div>
 
   <!-- Video card -->
   <div class="card">
@@ -250,6 +251,16 @@
         cooldownTimer = null;
         lastDetectedWord = "";
       }
+    });
+
+    btnSpace.addEventListener("click", async () => {
+      const data = await post("/api/add_space");
+      renderSentence(data.sentence);
+    });
+
+    btnDelete.addEventListener("click", async () => {
+      const data = await post("/api/delete_char");
+      renderSentence(data.sentence);
     });
   </script>
 </body>
