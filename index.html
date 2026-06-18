@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ASL Recognition System</title>
+  <link rel="stylesheet" href="index.css" />
+</head>
+<body>
+
+  <h1>ASL Recognition System</h1>
+  <hr />
+
+  <!-- Sentence card -->
+  <div class="card">
+    <div class="section-label">Complete Sentence</div>
+    <div id="sentence-box" class="placeholder">...</div>
+
+    <div class="tool-row">
+      <button id="btn-toggle" title="Turn on the webcam">Turn on the webcam</button>
+      <button id="btn-speak"   title="Read the sentence aloud">Read Aloud</button>
+      <button id="btn-auto-add" title="Toggle automatic word detection (75-90%: 3sec, >90%: instant)">Auto-Add OFF</button>
+      <button id="btn-space" title="Thêm một khoảng trắng">Space</button>
+      <button id="btn-delete" title="Xóa ký tự cuối cùng">Delete</button>
+    </div>
+
+  <!-- Video card -->
+  <div class="card">
+    <div class="section-label">Live Camera Feed</div>
+
+    <div id="camera-section">
+      <!-- Shown when camera is ON -->
+      <div id="camera-live" style="display:none">
+        <img id="video-feed" src="/video_feed" alt="webcam feed" />
+        <div id="result-label">Current Word: Waiting…</div>
+      </div>
+
+      <!-- Shown when camera is OFF -->
+      <div id="camera-off" class="camera-off-msg">
+         Webcam is off. Click "Turn on webcam" above to start.
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast"></div>
+
+  <script>
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    async function post(url) {
+      const r = await fetch(url, { method: "POST" });
+      return r.json();
+    }
+
+    function showToast(msg, duration = 2000) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), duration);
+    }
+
+    // ── DOM refs ──────────────────────────────────────────────────────────────
+    const btnToggle   = document.getElementById("btn-toggle");
+    const btnSpeak    = document.getElementById("btn-speak");
+    const btnAutoAdd  = document.getElementById("btn-auto-add");
+    const sentenceBox = document.getElementById("sentence-box");
+    const resultLabel = document.getElementById("result-label");
+    const cameraLive  = document.getElementById("camera-live");
+    const cameraOff   = document.getElementById("camera-off");
+    const btnSpace    = document.getElementById("btn-space");
+    const btnDelete   = document.getElementById("btn-delete");
+
+    // ── Auto-add state ────────────────────────────────────────────────────────
+    let autoAddEnabled = false;
+    let lastDetectedWord = "";
+    let lastConfidence = 0;
+    let autoAddTimer = null;
+    let cooldownTimer = null;
+
+    // ── Extract confidence from predicted_word (e.g., "A (87.5%)" → 87.5)
+    function extractConfidence(predictedWord) {
+      const match = predictedWord.match(/\((\d+\.?\d*)\%\)/);
+      return match ? parseFloat(match[1]) : 0;
+    }
+
+    // ── Extract word name (e.g., "A (87.5%)" → "A")
+    function extractWord(predictedWord) {
+      const match = predictedWord.match(/^(.+?)\s*\(/);
+      return match ? match[1].trim() : predictedWord;
+    }
+
+    // ── Auto-add logic ────────────────────────────────────────────────────────
+    function processAutoAdd(predictedWord) {
+      if (!autoAddEnabled || !predictedWord || predictedWord === "Waiting...") {
+        return;
+      }
+
+      const confidence = extractConfidence(predictedWord);
+      const word = extractWord(predictedWord);
+
+      if (confidence < 75) {
+        // Too low confidence, do nothing
+        return;
+      }
+
+      // Clear existing timers if word changed or new detection
+      if (word !== lastDetectedWord) {
+        if (autoAddTimer) {
+          clearTimeout(autoAddTimer);
+          autoAddTimer = null;
+        }
+      }
+
+      lastDetectedWord = word;
+      lastConfidence = confidence;
+
+      if (confidence > 90) {
+        // High confidence: add immediately, then cooldown
+        if (!cooldownTimer) {
+          addWordAutomatic(word);
+          // Start 2-second cooldown
+          cooldownTimer = setTimeout(() => {
+            cooldownTimer = null;
+            lastDetectedWord = ""; // Reset to allow next word
+          }, 2000);
+        }
+      } else if (confidence >= 75) {
+        // Medium confidence (75-90%): wait 3 seconds, reset timer if word changes
+        if (!autoAddTimer) {
+          autoAddTimer = setTimeout(() => {
+            if (lastDetectedWord === word && lastConfidence >= 75) {
+              addWordAutomatic(word);
+            }
+            autoAddTimer = null;
+            lastDetectedWord = ""; // Reset for next word
+          }, 3000);
+        }
+      }
+    }
+
+    async function addWordAutomatic(word) {
+      try {
+        const data = await post("/api/confirm_char");
+        showToast(`✓ Added: ${word}`, 1500);
+      } catch (e) {
+        console.error("Auto-add error:", e);
+      }
+    }
+
+    // ── Render helpers ────────────────────────────────────────────────────────
+    function renderSentence(sentence) {
+      if (!sentence) {
+        sentenceBox.textContent = '...';
+        sentenceBox.classList.add("placeholder");
+      } else {
+        sentenceBox.textContent = sentence;
+        sentenceBox.classList.remove("placeholder");
+      }
+    }
+
+    function renderCamera(running) {
+      if (running) {
+        cameraLive.style.display = "block";
+        cameraOff.style.display  = "none";
+        btnToggle.textContent = "■ Turn off the webcam";
+        btnToggle.classList.add("on");
+      } else {
+        cameraLive.style.display = "none";
+        cameraOff.style.display  = "block";
+        btnToggle.textContent = "Turn on the webcam";
+        btnToggle.classList.remove("on");
+      }
+    }
+
+    function renderAutoAdd(enabled) {
+      if (enabled) {
+        btnAutoAdd.textContent = "Auto-Add ON";
+        btnAutoAdd.classList.add("on");
+      } else {
+        btnAutoAdd.textContent = "Auto-Add OFF";
+        btnAutoAdd.classList.remove("on");
+      }
+    }
+
+    // ── Poll server state every 500 ms ────────────────────────────────────────
+    let pollingInterval = null;
+
+    async function pollState() {
+      try {
+        const data = await (await fetch("/api/state")).json();
+        renderSentence(data.sentence);
+        renderCamera(data.run_camera);
+        resultLabel.textContent = `Current Word: ${data.predicted_word}`;
+        
+        // Process auto-add logic
+        if (autoAddEnabled && data.run_camera) {
+          processAutoAdd(data.predicted_word);
+        }
+      } catch (e) {
+        // silently ignore transient network errors
+      }
+    }
+
+    function startPolling() {
+      if (!pollingInterval) {
+        pollingInterval = setInterval(pollState, 500);
+      }
+    }
+
+    startPolling();
+    pollState();
+
+    // ── Button actions ────────────────────────────────────────────────────────
+    btnToggle.addEventListener("click", async () => {
+      const data = await post("/api/toggle_camera");
+      renderCamera(data.run_camera);
+      if (data.run_camera) {
+        // Force MJPEG stream to reconnect
+        document.getElementById("video-feed").src = "/video_feed?" + Date.now();
+      } else {
+        // Clear timers when camera turns off
+        if (autoAddTimer) clearTimeout(autoAddTimer);
+        if (cooldownTimer) clearTimeout(cooldownTimer);
+        autoAddTimer = null;
+        cooldownTimer = null;
+        lastDetectedWord = "";
+      }
+    });
+
+    btnSpeak.addEventListener("click", async () => {
+      const data = await post("/api/speak");
+      if (data.ok) {
+        showToast("🔊 Reading aloud…");
+      } else {
+        showToast("⚠ " + (data.error || "TTS unavailable"), 3000);
+      }
+    });
+
+    btnAutoAdd.addEventListener("click", () => {
+      autoAddEnabled = !autoAddEnabled;
+      renderAutoAdd(autoAddEnabled);
+      if (autoAddEnabled) {
+        showToast("Auto-Add enabled", 3000);
+      } else {
+        showToast("Auto-Add disabled");
+        // Clear timers
+        if (autoAddTimer) clearTimeout(autoAddTimer);
+        if (cooldownTimer) clearTimeout(cooldownTimer);
+        autoAddTimer = null;
+        cooldownTimer = null;
+        lastDetectedWord = "";
+      }
+    });
+  </script>
+</body>
+</html>
